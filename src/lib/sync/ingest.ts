@@ -1,128 +1,192 @@
 /**
- * Central ingest orchestrator — merges data from multiple sources,
- * deduplicates by (source, source_id), and upserts to Supabase.
+ * Central ingest orchestrator
+ * Sources: Senate eFD, House PTR, (QuiverQuant when key available)
+ * All free, no API keys required for core functionality
  */
 
 import { createServiceClient } from '../supabase'
-import { fetchCapitalTradesPage, mapToDbTrade } from './capitaltrades'
-import { fetchQuiverQuant, mapQuiverToDb } from './quiverquant'
+import { fetchSenateFilings, fetchSenateTransactions, mapSenateToDb } from './senate'
+import { fetchHousePTRs, fetchHouseTransactions, mapHouseToDb } from './house'
+import { fetchMultipleQuotes } from './prices'
 
-export async function ingestCapitalTrades(maxPages = 5) {
+async function upsertPolitician(db: ReturnType<typeof createServiceClient>, politicianData: any) {
+  const { data, error } = await db
+    .from('politicians')
+    .upsert(politicianData, { onConflict: 'slug' })
+    .select('id')
+    .single()
+
+  if (error || !data) return null
+  return data.id
+}
+
+async function upsertTrade(db: ReturnType<typeof createServiceClient>, tradeData: any) {
+  const { error } = await db
+    .from('trades')
+    .upsert(tradeData, { onConflict: 'source,source_id', ignoreDuplicates: true })
+
+  return !error
+}
+
+export async function ingestSenate(year?: number): Promise<{ inserted: number; errors: number }> {
   const db = createServiceClient()
   let inserted = 0
+  let errors = 0
+
+  try {
+    const filings = await fetchSenateFilings(year)
+    console.log(`Senate: found ${filings.length} filings`)
+
+    for (const filing of filings.slice(0, 50)) { // batch limit
+      try {
+        const transactions = await fetchSenateTransactions(filing)
+
+        for (const tx of transactions) {
+          if (!tx.ticker && !tx.assetName) continue
+
+          const { politician: polData, trade: tradeData } = mapSenateToDb(filing, tx)
+          const politicianId = await upsertPolitician(db, polData)
+          if (!politicianId) continue
+
+          const ok = await upsertTrade(db, { ...tradeData, politician_id: politicianId })
+          if (ok) inserted++
+        }
+
+        await new Promise(r => setTimeout(r, 200)) // rate limit
+      } catch (err) {
+        errors++
+        console.error('Senate filing error:', err)
+      }
+    }
+  } catch (err) {
+    console.error('Senate ingest error:', err)
+    errors++
+  }
+
+  return { inserted, errors }
+}
+
+export async function ingestHouse(year?: number): Promise<{ inserted: number; errors: number }> {
+  const db = createServiceClient()
+  let inserted = 0
+  let errors = 0
+
+  try {
+    const ptrs = await fetchHousePTRs(year)
+    console.log(`House: found ${ptrs.length} PTRs`)
+
+    for (const ptr of ptrs.slice(0, 50)) {
+      try {
+        const transactions = await fetchHouseTransactions(ptr)
+
+        for (const tx of transactions) {
+          if (!tx.ticker && !tx.assetName) continue
+
+          const { politician: polData, trade: tradeData } = mapHouseToDb(ptr, tx)
+          const politicianId = await upsertPolitician(db, polData)
+          if (!politicianId) continue
+
+          const ok = await upsertTrade(db, { ...tradeData, politician_id: politicianId })
+          if (ok) inserted++
+        }
+
+        await new Promise(r => setTimeout(r, 200))
+      } catch (err) {
+        errors++
+      }
+    }
+  } catch (err) {
+    errors++
+  }
+
+  return { inserted, errors }
+}
+
+export async function syncStockPrices(): Promise<{ updated: number }> {
+  const db = createServiceClient()
+
+  // Get all unique tickers from trades
+  const { data: trades } = await db
+    .from('trades')
+    .select('ticker')
+    .not('ticker', 'is', null)
+
+  const tickers = [...new Set((trades || []).map(t => t.ticker).filter(Boolean))] as string[]
+  if (!tickers.length) return { updated: 0 }
+
+  // Batch fetch from Yahoo Finance (50 at a time)
   let updated = 0
+  for (let i = 0; i < tickers.length; i += 50) {
+    const batch = tickers.slice(i, i + 50)
+    const quotes = await fetchMultipleQuotes(batch)
 
-  for (let page = 1; page <= maxPages; page++) {
-    const response = await fetchCapitalTradesPage(page)
-    const { data: transactions } = response
+    for (const [ticker, quote] of quotes) {
+      const { error } = await db.from('stock_prices').upsert({
+        ticker,
+        date: quote.date,
+        open: quote.open,
+        high: quote.high,
+        low: quote.low,
+        close: quote.price,
+        volume: quote.volume,
+      }, { onConflict: 'ticker,date' })
 
-    if (!transactions.length) break
-
-    for (const tx of transactions) {
-      const { politician: politicianData, trade: tradeData } = mapToDbTrade(tx)
-
-      // Upsert politician
-      const { data: politician, error: polError } = await db
-        .from('politicians')
-        .upsert(politicianData, { onConflict: 'slug' })
-        .select('id')
-        .single()
-
-      if (polError || !politician) continue
-
-      // Upsert trade
-      const { error: tradeError, data: trade } = await db
-        .from('trades')
-        .upsert(
-          { ...tradeData, politician_id: politician.id },
-          { onConflict: 'source,source_id', ignoreDuplicates: false }
-        )
-        .select('id')
-        .single()
-
-      if (!tradeError && trade) inserted++
+      if (!error) updated++
     }
 
-    // Stop if we've hit the last page
-    if (page >= response.meta.totalPages) break
-
-    // Respect rate limits
-    await new Promise(r => setTimeout(r, 300))
+    await new Promise(r => setTimeout(r, 500))
   }
 
-  return { inserted, updated }
+  return { updated }
 }
 
-export async function ingestQuiverQuant() {
-  const db = createServiceClient()
-  let inserted = 0
-
-  for (const chamber of ['senate', 'house'] as const) {
-    const trades = await fetchQuiverQuant(chamber)
-
-    for (let i = 0; i < trades.length; i++) {
-      const trade = trades[i]
-      const sourceId = `qv-${chamber}-${trade.Date}-${trade.Ticker}-${i}`
-      const { politician: politicianData, trade: tradeData } = mapQuiverToDb(trade, sourceId)
-
-      const { data: politician, error: polError } = await db
-        .from('politicians')
-        .upsert(politicianData, { onConflict: 'slug' })
-        .select('id')
-        .single()
-
-      if (polError || !politician) continue
-
-      const { error } = await db
-        .from('trades')
-        .upsert(
-          { ...tradeData, politician_id: politician.id },
-          { onConflict: 'source,source_id', ignoreDuplicates: true }
-        )
-
-      if (!error) inserted++
-    }
-  }
-
-  return { inserted }
-}
-
-export async function runFullSync() {
+export async function runFullSync(year?: number) {
   const db = createServiceClient()
 
-  const logEntry = await db
+  const { data: log } = await db
     .from('sync_log')
     .insert({ source: 'full', status: 'running' })
     .select('id')
     .single()
 
   try {
-    const [ct, qv] = await Promise.allSettled([
-      ingestCapitalTrades(10),
-      ingestQuiverQuant(),
+    console.log('Starting full sync...')
+
+    const [senateResult, houseResult] = await Promise.allSettled([
+      ingestSenate(year),
+      ingestHouse(year),
     ])
 
-    const ctResult = ct.status === 'fulfilled' ? ct.value : { inserted: 0, updated: 0 }
-    const qvResult = qv.status === 'fulfilled' ? qv.value : { inserted: 0 }
+    const senate = senateResult.status === 'fulfilled' ? senateResult.value : { inserted: 0, errors: 1 }
+    const house = houseResult.status === 'fulfilled' ? houseResult.value : { inserted: 0, errors: 1 }
 
-    const total = ctResult.inserted + qvResult.inserted
+    // Sync stock prices for all tickers we now have
+    const prices = await syncStockPrices()
 
-    if (logEntry.data) {
+    const totalInserted = senate.inserted + house.inserted
+
+    if (log) {
       await db.from('sync_log').update({
         status: 'success',
-        records_inserted: total,
+        records_inserted: totalInserted,
         completed_at: new Date().toISOString(),
-      }).eq('id', logEntry.data.id)
+      }).eq('id', log.id)
     }
 
-    return { success: true, inserted: total }
+    return {
+      success: true,
+      senate: senate.inserted,
+      house: house.inserted,
+      prices: prices.updated,
+      total: totalInserted,
+    }
   } catch (err) {
-    if (logEntry.data) {
+    if (log) {
       await db.from('sync_log').update({
         status: 'error',
         error_message: String(err),
         completed_at: new Date().toISOString(),
-      }).eq('id', logEntry.data.id)
+      }).eq('id', log.id)
     }
     throw err
   }
