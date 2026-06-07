@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { TrendingUp, Users, BarChart3, Briefcase, Activity } from 'lucide-react'
 import SearchBar from './SearchBar'
+import AuthButton from './AuthButton'
 
 const nav = [
   { href: '/', label: 'Dashboard', icon: Activity },
@@ -43,8 +44,9 @@ export default function Navbar() {
           ))}
         </div>
 
-        <div className="flex-1 flex justify-end">
+        <div className="flex-1 flex items-center justify-end gap-3">
           <SearchBar />
+          <AuthButton />
         </div>
       </div>
     </nav>

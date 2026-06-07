@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation'
 import { getPolitician, getPoliticianTrades } from '@/lib/data'
-import { formatDate, formatAmountRange, transactionBadge, partyColor, partyBg } from '@/lib/utils'
+import { formatDate, formatAmountRange, transactionBadge, partyColor } from '@/lib/utils'
 import Link from 'next/link'
-import { ArrowLeft, TrendingUp, TrendingDown, DollarSign } from 'lucide-react'
+import { ArrowLeft, TrendingUp, TrendingDown } from 'lucide-react'
+import AlertButton from '@/components/AlertButton'
 
 export const revalidate = 300
 
@@ -33,8 +34,11 @@ export default async function PoliticianPage({ params }: { params: Promise<{ slu
         <div className="w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center text-3xl font-bold text-white shrink-0">
           {politician.full_name.charAt(0)}
         </div>
-        <div>
-          <h1 className="text-3xl font-bold text-white">{politician.full_name}</h1>
+        <div className="flex-1">
+          <div className="flex items-start justify-between gap-4">
+            <h1 className="text-3xl font-bold text-white">{politician.full_name}</h1>
+            <AlertButton politicianId={politician.id} politicianName={politician.full_name} />
+          </div>
           <div className="flex items-center gap-3 mt-2 text-sm">
             <span className={`font-semibold ${partyColor(politician.party)}`}>
               {politician.party === 'D' ? 'Democrat' : politician.party === 'R' ? 'Republican' : 'Independent'}
