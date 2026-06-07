@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { TrendingUp, Users, BarChart3, Briefcase, Activity } from 'lucide-react'
+import { TrendingUp, Users, BarChart3, Briefcase, Activity, Trophy, ShieldAlert } from 'lucide-react'
 import SearchBar from './SearchBar'
 import AuthButton from './AuthButton'
 
@@ -12,6 +12,8 @@ const nav = [
   { href: '/feed', label: 'Trade Feed', icon: TrendingUp },
   { href: '/politicians', label: 'Politicians', icon: Users },
   { href: '/stocks', label: 'Stocks', icon: BarChart3 },
+  { href: '/copy-trading', label: 'Copy Trading', icon: Trophy },
+  { href: '/conflicts', label: 'Conflicts', icon: ShieldAlert },
   { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
 ]
 
