@@ -2,6 +2,7 @@ import { getStockTrades } from '@/lib/data'
 import { formatDate, formatAmountRange, transactionBadge, partyColor } from '@/lib/utils'
 import Link from 'next/link'
 import { ArrowLeft, TrendingUp, TrendingDown } from 'lucide-react'
+import StockChart from '@/components/StockChart'
 
 export const revalidate = 300
 
@@ -14,7 +15,6 @@ export default async function StockPage({ params }: { params: Promise<{ ticker: 
   const sales = trades.filter(t => t.transaction_type === 'Sale')
   const companyName = trades[0]?.company_name || tickerUpper
 
-  // Politicians who've traded this stock
   const politicianMap = new Map<string, { pol: typeof trades[0]['politicians']; buys: number; sells: number }>()
   for (const trade of trades) {
     const pol = trade.politicians
@@ -34,10 +34,23 @@ export default async function StockPage({ params }: { params: Promise<{ ticker: 
       </Link>
 
       {/* Header */}
-      <div>
-        <h1 className="text-4xl font-mono font-bold text-white">{tickerUpper}</h1>
-        <p className="text-gray-400 mt-1">{companyName}</p>
+      <div className="flex items-end gap-4">
+        <div>
+          <h1 className="text-4xl font-mono font-bold text-white">{tickerUpper}</h1>
+          <p className="text-gray-400 mt-1">{companyName}</p>
+        </div>
+        <div className="flex gap-4 mb-1 text-sm">
+          <span className="flex items-center gap-1 text-emerald-400">
+            <TrendingUp size={14} /> {purchases.length} buys
+          </span>
+          <span className="flex items-center gap-1 text-red-400">
+            <TrendingDown size={14} /> {sales.length} sells
+          </span>
+        </div>
       </div>
+
+      {/* Price chart */}
+      <StockChart ticker={tickerUpper} />
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
@@ -46,15 +59,11 @@ export default async function StockPage({ params }: { params: Promise<{ ticker: 
           <div className="text-2xl font-bold text-white">{trades.length}</div>
         </div>
         <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1">
-            <TrendingUp size={10} className="text-emerald-400" /> Purchases
-          </div>
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Purchases</div>
           <div className="text-2xl font-bold text-emerald-400">{purchases.length}</div>
         </div>
         <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1">
-            <TrendingDown size={10} className="text-red-400" /> Sales
-          </div>
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Sales</div>
           <div className="text-2xl font-bold text-red-400">{sales.length}</div>
         </div>
       </div>
